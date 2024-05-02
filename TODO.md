@@ -1,19 +1,17 @@
 * Short-term tasks
-  - Turn some Ints into more abstract things (e.g., Addrs)
-  - Rename Atom to SAddr
   - Make a typeclass for ownable things (plus conversions with
     individual word ownership)
   - Think aboutr arrays
 
 * Malloc is interesting!
-  - However: 
+  - However:
       - pKVM programs don't actually allocate or free!
       - there are other tools that can tell when C programs access
         memory out of bounds, so perhaps there's less value in testing
         exhaustively for such behaviors
       - We may want to use our generators with runtime models where we
         don't control malloc (e.g., running our examples as actual C
-        programs) 
+        programs)
       - So doing complicated stuff for malloc may be lower value
   - Goals:
       - Malloc'd pointers should be able to appear in any order in

@@ -84,12 +84,12 @@ owned l = CN $ do
 -------------------------------------------------------------------
 -- Symbolic heaps
 
-newtype Atom = Atom Int
+newtype SAddr = SAddr Int
                deriving (Eq, Ord, Show)
 
-newAtom (Atom a) = Atom (a+1)
+newSAddr (SAddr a) = SAddr (a+1)
 
-data SLoc = SLoc {base :: Atom,
+data SLoc = SLoc {base :: SAddr,
                   offset :: Int,
                   validOffsets :: Int} -- do we need this?
             deriving (Show, Eq, Ord)
@@ -97,7 +97,7 @@ data SLoc = SLoc {base :: Atom,
 type SVal = Either SLoc Int
 
 data SHeap = SHeap {contents :: Map SLoc SVal,
-                    freePtr :: Atom}
+                    freePtr :: SAddr}
             deriving (Show, Eq, Ord)
 
 malloc :: [SVal] -> SHeap -> (SVal,SHeap)
@@ -105,7 +105,7 @@ malloc svs s = (Left (SLoc p 0 (length svs)), newSHeap)
   where p = freePtr s
         newSLocs = zip [ SLoc p i (length svs) | i <- [0..] ] svs
         newMap = Map.union (contents s) (Map.fromList newSLocs)
-        newSHeap = SHeap newMap (newAtom p)
+        newSHeap = SHeap newMap (newSAddr p)
 
 -- Generating symbolic heaps
 
@@ -114,14 +114,14 @@ newtype SHeapBuilder a = SHeapBuilder (State SHeap a)
 
 runSHeapBuilder :: SHeapBuilder a -> (a, SHeap)
 runSHeapBuilder (SHeapBuilder m) =
-  runState m (SHeap Map.empty (Atom 1))
+  runState m (SHeap Map.empty (SAddr 1))
 
 alloc svs = SHeapBuilder . state $ malloc svs
 
-intFromSLoc :: Map Atom Int -> SLoc -> Int
+intFromSLoc :: Map SAddr Int -> SLoc -> Int
 intFromSLoc am r = am Map.! (base r) + offset r
 
-intFromSVal :: Map Atom Int -> SVal -> Int
+intFromSVal :: Map SAddr Int -> SVal -> Int
 intFromSVal _ (Right n) = n
 intFromSVal am (Left p) = intFromSLoc am p
 
@@ -139,20 +139,20 @@ intFromSVal am (Left p) = intFromSLoc am p
   It produces a generator for random concrete heaps (plus associated
   maps from symbolic to concrete addresses).
 -}
-concretize :: SHeap -> [SLoc] -> Gen (Heap, Map Atom Int)
+concretize :: SHeap -> [SLoc] -> Gen (Heap, Map SAddr Int)
 concretize s slocs = do
-  atomsAndSizes <- allAtomsAndSizes
-  gaps <- sequence [ oneof [return 0, choose (1,10)] | _ <- atomsAndSizes ]
-  let atomMap = addresses 1 gaps atomsAndSizes
+  sAddrsAndSizes <- allSAddrsAndSizes
+  gaps <- sequence [ oneof [return 0, choose (1,10)] | _ <- sAddrsAndSizes ]
+  let sAddrMap = addresses 1 gaps sAddrsAndSizes
   -- slocMap :: SLoc -> Int
-  let slocMap sloc =  (atomMap Map.! base sloc) + offset sloc
+  let slocMap sloc =  (sAddrMap Map.! base sloc) + offset sloc
   let SHeap h _ = s
   let  h' = Map.fromList
               [ (slocMap k, either slocMap id v) | (k,v) <- Map.toList h ]
-  return (Heap h', atomMap)
+  return (Heap h', sAddrMap)
 
   where
-    allAtomsAndSizes =
+    allSAddrsAndSizes =
       shuffle $
       nubOrd . map baseAndSize $
       slocs ++ [sl | Left sl <- Map.elems (contents s)]
