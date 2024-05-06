@@ -42,6 +42,22 @@ store p n = C $ do
   put (Heap (Map.insert p n h))
   return ()
 
+-- find a place to allocate n words and return a pointer to it
+-- (simple version!)
+findSpaceFor :: Int -> C Int
+findSpaceFor n = C $ do
+  Heap h <- get
+  return (maxKey h + 1)
+
+  where maxKey h = safeHead $ reverse $ Map.keys h
+        safeHead l = case uncons l of
+                       Nothing -> (0 :: Int)
+                       Just (p,_) -> p
+
+-- allocate n words, initialize, and return a pointer to the first
+malloc :: Int -> C Int
+malloc n = undefined
+
 -------------------------------------------------------------------
 -- The CN monad (for evaluating SL predicates on concrete heaps)
 
@@ -100,8 +116,8 @@ data SHeap = SHeap {contents :: Map SLoc SVal,
                     freePtr :: SAddr}
             deriving (Show, Eq, Ord)
 
-malloc :: [SVal] -> SHeap -> (SVal,SHeap)
-malloc svs s = (Left (SLoc p 0 (length svs)), newSHeap)
+smalloc :: [SVal] -> SHeap -> (SVal,SHeap)
+smalloc svs s = (Left (SLoc p 0 (length svs)), newSHeap)
   where p = freePtr s
         newSLocs = zip [ SLoc p i (length svs) | i <- [0..] ] svs
         newMap = Map.union (contents s) (Map.fromList newSLocs)
@@ -116,7 +132,7 @@ runSHeapBuilder :: SHeapBuilder a -> (a, SHeap)
 runSHeapBuilder (SHeapBuilder m) =
   runState m (SHeap Map.empty (SAddr 1))
 
-alloc svs = SHeapBuilder . state $ malloc svs
+alloc svs = SHeapBuilder . state $ smalloc svs
 
 intFromSLoc :: Map SAddr Int -> SLoc -> Int
 intFromSLoc am r = am Map.! (base r) + offset r
@@ -127,12 +143,13 @@ intFromSVal am (Left p) = intFromSLoc am p
 
 -- (Plus a specific sheap builder for each datatype used in specs)
 
+-----------------------------------------------------------------------
 -- Translating symbolic heaps to (generators for) concrete heaps
 
 {-
   The concretize function takes a symbolic heap (and a list of
   symbolic locations, which is currently not used and whose purpose is
-  not 100% clear to me -- it was something to do with the possibility
+  not 100% clear to BCP: it was something to do with the possibility
   of pointers from the "current" heap to other parts of memory that
   are not in the domain of the current heap).
 

@@ -1,7 +1,23 @@
+* Next job: Implement malloc.  Proposal:
+  - start by keeping the present concretize function
+  - add a simplest possible malloc that just (deterministically) finds
+    the first index not in the domain of the current heap and
+    allocates there
+      - later, we could have malloc look for a free space of
+        appropriate size, following pre-generated instructions as
+        sketched below
+      - note that the "simplest" instruction -- the one that others
+        shrink to -- should be to put the new stuff just past (but not
+        directly adjacent to) the very last allocated memory cell
+      - last, consider replacing the current fancy concretize with
+        calls to this new malloc
+  - free just removes an index from the heap  (this should be adequate
+    for finding double-free errors?)
+
 * Short-term tasks
   - Make a typeclass for ownable things (plus conversions with
     individual word ownership)
-  - Think aboutr arrays
+  - Think about arrays
 
 * Malloc is interesting!
   - However:
