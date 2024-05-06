@@ -64,8 +64,8 @@
      interesting data structures
 
 * Questions
-   - Do we really need symbolic heaps?  Would it actually be harder to
-     do the whole translation in one step (i.e., in one monad)?
-   - Delete second argument of concretize?
-   - Do we need the maximumValid field
-   - DO we actually need malloc?  pKVM doesn't use it!
+   - Do we really need symbolic heaps?  Would it really be much harder
+     to do the whole translation in one step (i.e., in one monad)?
+   - Can we delete second argument of concretize?
+   - Do/did we need the maximumValid field
+   - Do we actually need malloc?  pKVM doesn't use it!
