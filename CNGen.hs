@@ -385,14 +385,14 @@ prop_intQueueSHeapBuilder ns =
 pushC :: Int -> Int -> C ()
 pushC 0 _ = failC
 pushC p i = do
-  header <- deref p
-  h <- deref header
+  h <- deref p
+  t <- deref $ p+1
   c <- malloc 2
   store c i
-  store (c+1) 0
-  store (header+1) c
-  if h == 0
-    then store header c
+  store (c+1) h
+  store p c
+  if t == 0
+    then store (p+1) c
     else return ()
 
 prop_pushC :: [Int] -> Int -> Property
@@ -405,9 +405,8 @@ prop_pushC ns i =
     counterexample ("r = " ++ show r) $
     counterexample ("h' = " ++ show h') $
     case r of
-      Nothing -> undefined
-      Just () ->    runCN (intQueue pn) (Heap h')
-                 == Just (Map.keysSet h', ns ++ [i])
+      Nothing -> False
+      Just () -> runCN (intQueue pn) (Heap h')
+                 == Just (Map.keysSet h', [i] ++ ns)
 
   where (svn, sh) = runSHeapBuilder (intQueueSHeapBuilder ns)
-
