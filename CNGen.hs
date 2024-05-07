@@ -29,14 +29,17 @@ newtype C a = C (StateT Heap Maybe a)
 runC :: C a -> Heap -> Maybe (a, Heap)
 runC (C c) h = runStateT c h
 
+failC :: C a
+failC = C (lift Nothing)
+
 deref :: Int -> C Int
-deref 0 = C (lift Nothing)
+deref 0 = failC
 deref p = C $ do
   Heap h <- get
   return (h Map.! p)
 
 store :: Int -> Int -> C ()
-store 0 _ = C (lift Nothing)
+store 0 _ = failC
 store p n = C $ do
   Heap h <- get
   put (Heap (Map.insert p n h))
@@ -54,9 +57,12 @@ findSpaceFor n = C $ do
                        Nothing -> (0 :: Int)
                        Just (p,_) -> p
 
--- allocate n words, initialize, and return a pointer to the first
+-- allocate n words, initialize, and return a pointer to the first one
 malloc :: Int -> C Int
-malloc n = undefined
+malloc n = do
+  p <- findSpaceFor n
+  mapM_ (\p' -> store p' 0) [p .. p+n-1]
+  return p
 
 -------------------------------------------------------------------
 -- The CN monad (for evaluating SL predicates on concrete heaps)
@@ -320,6 +326,114 @@ prop_tailC ns =
 
 -- Queues
 
+-- Every queue is represented by a pointer to a two-word structure.
+-- If the queue is empty, then both words in this structure contain
+-- null.  If non-empty, then the first word points to the head cell of
+-- the queue, second to the tail.  Each cell contains a number and a
+-- pointer to the next cell (or null).
+
+intQueue :: Int -> CN [Int]
+intQueue 0 = failCN
+intQueue p = do
+  hd <- owned p
+  tl <- owned (p+1)
+  case (hd,tl) of
+    (0,0) -> return []
+    (_,0) -> failCN
+    (0,_) -> failCN
+    _ -> intQueueFromTo hd tl
+
+intQueueFromTo :: Int -> Int -> CN [Int]
+intQueueFromTo h last = do
+  hv <- owned h
+  next <- owned (h+1)
+  if h == last then do
+    if next /= 0 then failCN
+                 else return [hv]
+  else do
+    tv <- intQueueFromTo next last
+    return (hv:tv)
+
+intQueueSHeapBuilder :: [Int] -> SHeapBuilder SVal
+intQueueSHeapBuilder [] = do
+  p' <- alloc [Right 0, Right 0]
+  return p'
+intQueueSHeapBuilder (n:ns) = do
+  (p,q) <- intQueueFromToSHeapBuilder (n:ns)
+  p' <- alloc [p, q]
+  return p'
+
+intQueueFromToSHeapBuilder :: [Int] -> SHeapBuilder (SVal,SVal)
+intQueueFromToSHeapBuilder (n:ns) = do
+  if ns /= [] then do
+    (p,q) <- intQueueFromToSHeapBuilder ns
+    p' <- alloc [Right n, p]
+    return (p',q)
+  else do
+    p' <- alloc [Right n, Right 0]
+    return (p',p')
+
+prop_intQueueSHeapBuilder :: [Int] -> Property
+prop_intQueueSHeapBuilder ns =
+  forAll (concretize sh []) $ \(Heap h, am) ->
+    let p = intFromSVal am sv in
+    runCN (intQueue p) (Heap h) === Just (Map.keysSet h, ns)
+  where (sv, sh) = runSHeapBuilder (intQueueSHeapBuilder ns)
+
+pushC :: Int -> Int -> C ()
+pushC 0 _ = failC
+pushC p i = do
+  header <- deref p
+  h <- deref header
+  c <- malloc 2
+  store c i
+  store (c+1) 0
+  store (header+1) c
+  if h == 0
+    then store header c
+    else return ()
+
+{- OLD:
+pushC :: Int -> Int -> C ()
+pushC 0 _ = failC
+pushC p i = do
+  if p == 0 then do
+    ht <- malloc 2
+    c <- malloc 2
+    store c i
+    store (c+1) 0
+    store ht c
+    store (ht+1) c
+    return ()
+  else do
+    c <- malloc 2
+    store c i
+    store (c+1) 0
+    ht <- deref p
+    t <- deref (ht+1)
+    store (t+1) c
+    store (ht+1) c
+    return ()
+-}
+
+prop_pushC :: [Int] -> Int -> Property
+prop_pushC ns i =
+  forAll (concretize sh []) $ \(h, am) ->
+    let pn = intFromSVal am svn
+        Just ((), Heap h') = runC (pushC pn i) h in
+    counterexample ("h = " ++ show h) $
+    counterexample ("pn = " ++ show pn) $
+    counterexample ("h' = " ++ show h') $
+    runCN (intQueue pn) (Heap h') == Just (Map.keysSet h', ns ++ [i])
+
+  where (svn, sh) = runSHeapBuilder (intQueueSHeapBuilder ns)
+
+{- OLD VERSION!
+
+-- Empty queue is represented by a null pointer. Non-empty queue is
+-- represented by two words, pointing to the head and tail cells.
+-- Each cell contains a number and a pointer to the next cell.
+
 intQueue :: Int -> CN [Int]
 intQueue 0 = return []
 intQueue p = do
@@ -365,22 +479,32 @@ prop_intQueueSHeapBuilder ns =
   where (sv, sh) = runSHeapBuilder (intQueueSHeapBuilder ns)
 
 pushC :: Int -> Int -> C ()
-pushC p i =
+pushC 0 _ = failC
+pushC p i = do
   if p == 0 then do
-    -- TODO: need to allocate two new cells and fill them in
+    ht <- malloc 2
+    c <- malloc 2
+    store c i
+    store (c+1) 0
+    store ht c
+    store (ht+1) c
     return ()
   else do
-    -- TODO: Need to allocate one new cell and link it in
+    c <- malloc 2
+    store c i
+    store (c+1) 0
+    ht <- deref p
+    t <- deref (ht+1)
+    store (t+1) c
+    store (ht+1) c
     return ()
 
-{-
 prop_pushC :: [Int] -> Int -> Property
 prop_pushC ns i =
   forAll (concretize sh []) $ \(h, am) ->
-    -- TODO: generate an integer to push
     let pn = intFromSVal am svn
-        Just (p', Heap h') = runC (pushC pn i) h in
-    runCN (intQueue p') (Heap h') == Just (Map.keysSet h', ms ++ ns)
+        Just ((), Heap h') = runC (pushC pn i) h in
+    runCN (intQueue pn) (Heap h') == Just (Map.keysSet h', ns ++ [i])
 
   where (svn, sh) = runSHeapBuilder (intQueueSHeapBuilder ns)
 -}
