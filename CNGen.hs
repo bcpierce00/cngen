@@ -23,14 +23,15 @@ newtype Heap = Heap (Map Int Int)
 
 -- The C monad (for manipulating concrete heaps)
 
-newtype C a = C (StateT Heap Maybe a)
+newtype C a = C (MaybeT (State Heap) a)
               deriving (Functor, Applicative, Monad)
 
-runC :: C a -> Heap -> Maybe (a, Heap)
-runC (C c) h = runStateT c h
+runC :: C a -> Heap -> (Maybe a, Heap)
+runC (C c) h = runState (runMaybeT c) h
 
 failC :: C a
-failC = C (lift Nothing)
+failC = C $ MaybeT $ do
+  return Nothing
 
 deref :: Int -> C Int
 deref 0 = failC
@@ -63,6 +64,7 @@ malloc n = do
   p <- findSpaceFor n
   mapM_ (\p' -> store p' 0) [p .. p+n-1]
   return p
+
 
 -------------------------------------------------------------------
 -- The CN monad (for evaluating SL predicates on concrete heaps)
@@ -206,7 +208,7 @@ prop_swapC m n =
   forAll (concretize sh []) $ \(h, am) ->
     let pn = intFromSVal am spn
         qn = intFromSVal am sqn
-        Just ((), Heap h') = runC (swapC pn qn) h in
+        (Just (), Heap h') = runC (swapC pn qn) h in
     runCN (liftM2 (,) (owned pn) (owned qn)) (Heap h') == Just (Map.keysSet h', (n,m))
 
   where ((spn,sqn), sh) = runSHeapBuilder $ do
@@ -228,7 +230,7 @@ prop_incr2C tc =
   forAll (concretize sh []) $ \(h, am) ->
     let pn = intFromSVal am spn
         qn = intFromSVal am sqn
-        Just ((), Heap h') = runC (do incr2C pn qn; incr2C pn pn) h in
+        (Just (), Heap h') = runC (do incr2C pn qn; incr2C pn pn) h in
     counterexample (show (Heap h')) $
     runCN (bothOwned pn qn) (Heap h') == Just (Map.keysSet h', result)
 
@@ -278,7 +280,7 @@ prop_revC :: [Int] -> Property
 prop_revC ns =
   forAll (concretize sh []) $ \(h, am) ->
     let p = intFromSVal am sv
-        Just (p', Heap h') = runC (revC p) h in
+        (Just p', Heap h') = runC (revC p) h in
     runCN (intList p') (Heap h') == Just (Map.keysSet h', reverse ns)
 
   where (sv, sh) = runSHeapBuilder (intListSHeapBuilder ns)
@@ -296,7 +298,7 @@ prop_appendC ms ns =
   forAll (concretize sh []) $ \(h, am) ->
     let pm = intFromSVal am svm
         pn = intFromSVal am svn
-        Just (p', Heap h') = runC (appendC pm pn) h in
+        (Just p', Heap h') = runC (appendC pm pn) h in
     runCN (intList p') (Heap h') == Just (Map.keysSet h', ms ++ ns)
 
   where ((svm,svn), sh) = runSHeapBuilder (liftM2 (,) (intListSHeapBuilder ms) (intListSHeapBuilder ns))
@@ -305,7 +307,7 @@ prop_appendC_aliased :: [Int] -> Property
 prop_appendC_aliased ns =
   forAll (concretize sh []) $ \(h, am) ->
     let pn = intFromSVal am svn
-        Just (p', Heap h') = runC (appendC pn pn) h in
+        (Just p', Heap h') = runC (appendC pn pn) h in
     runCN (intList p') (Heap h') == Just (Map.keysSet h', ns ++ ns)
 
   where (svn, sh) = runSHeapBuilder (intListSHeapBuilder ns)
@@ -319,7 +321,7 @@ prop_tailC ns =
   not (null ns) ==>
   forAll (concretize sh []) $ \(h, am) ->
     let pn = intFromSVal am svn
-        Just (p', Heap h') = runC (tailC pn) h in
+        (Just p', Heap h') = runC (tailC pn) h in
     runCN (intList p') (Heap h') == Just (Map.keysSet h', tail ns)
 
   where (svn, sh) = runSHeapBuilder (intListSHeapBuilder ns)
@@ -393,118 +395,19 @@ pushC p i = do
     then store header c
     else return ()
 
-{- OLD:
-pushC :: Int -> Int -> C ()
-pushC 0 _ = failC
-pushC p i = do
-  if p == 0 then do
-    ht <- malloc 2
-    c <- malloc 2
-    store c i
-    store (c+1) 0
-    store ht c
-    store (ht+1) c
-    return ()
-  else do
-    c <- malloc 2
-    store c i
-    store (c+1) 0
-    ht <- deref p
-    t <- deref (ht+1)
-    store (t+1) c
-    store (ht+1) c
-    return ()
--}
-
 prop_pushC :: [Int] -> Int -> Property
 prop_pushC ns i =
   forAll (concretize sh []) $ \(h, am) ->
     let pn = intFromSVal am svn
-        Just ((), Heap h') = runC (pushC pn i) h in
+        (r, Heap h') = runC (pushC pn i) h in
     counterexample ("h = " ++ show h) $
     counterexample ("pn = " ++ show pn) $
+    counterexample ("r = " ++ show r) $
     counterexample ("h' = " ++ show h') $
-    runCN (intQueue pn) (Heap h') == Just (Map.keysSet h', ns ++ [i])
+    case r of
+      Nothing -> undefined
+      Just () ->    runCN (intQueue pn) (Heap h')
+                 == Just (Map.keysSet h', ns ++ [i])
 
   where (svn, sh) = runSHeapBuilder (intQueueSHeapBuilder ns)
 
-{- OLD VERSION!
-
--- Empty queue is represented by a null pointer. Non-empty queue is
--- represented by two words, pointing to the head and tail cells.
--- Each cell contains a number and a pointer to the next cell.
-
-intQueue :: Int -> CN [Int]
-intQueue 0 = return []
-intQueue p = do
-  hd <- owned p
-  tl <- owned (p+1)
-  l <- intQueueFromTo hd tl
-  return l
-
-intQueueFromTo :: Int -> Int -> CN [Int]
-intQueueFromTo h last = do
-  hv <- owned h
-  next <- owned (h+1)
-  if h == last then do
-    if next /= 0 then failCN
-                 else return [hv]
-  else do
-    tv <- intQueueFromTo next last
-    return (hv:tv)
-
-intQueueFromToSHeapBuilder :: [Int] -> SHeapBuilder (SVal,SVal)
-intQueueFromToSHeapBuilder (n:ns) = do
-  if ns /= [] then do
-    (p,q) <- intQueueFromToSHeapBuilder ns
-    p' <- alloc [Right n, p]
-    return (p',q)
-  else do
-    p' <- alloc [Right n, Right 0]
-    return (p',p')
-
-intQueueSHeapBuilder :: [Int] -> SHeapBuilder SVal
-intQueueSHeapBuilder [] = do
-  return (Right 0)
-intQueueSHeapBuilder (n:ns) = do
-  (p,q) <- intQueueFromToSHeapBuilder (n:ns)
-  p' <- alloc [p, q]
-  return p'
-
-prop_intQueueSHeapBuilder :: [Int] -> Property
-prop_intQueueSHeapBuilder ns =
-  forAll (concretize sh []) $ \(Heap h, am) ->
-    let p = intFromSVal am sv in
-    runCN (intQueue p) (Heap h) === Just (Map.keysSet h, ns)
-  where (sv, sh) = runSHeapBuilder (intQueueSHeapBuilder ns)
-
-pushC :: Int -> Int -> C ()
-pushC 0 _ = failC
-pushC p i = do
-  if p == 0 then do
-    ht <- malloc 2
-    c <- malloc 2
-    store c i
-    store (c+1) 0
-    store ht c
-    store (ht+1) c
-    return ()
-  else do
-    c <- malloc 2
-    store c i
-    store (c+1) 0
-    ht <- deref p
-    t <- deref (ht+1)
-    store (t+1) c
-    store (ht+1) c
-    return ()
-
-prop_pushC :: [Int] -> Int -> Property
-prop_pushC ns i =
-  forAll (concretize sh []) $ \(h, am) ->
-    let pn = intFromSVal am svn
-        Just ((), Heap h') = runC (pushC pn i) h in
-    runCN (intQueue pn) (Heap h') == Just (Map.keysSet h', ns ++ [i])
-
-  where (svn, sh) = runSHeapBuilder (intQueueSHeapBuilder ns)
--}
