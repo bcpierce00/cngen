@@ -58,13 +58,25 @@ findSpaceFor n = C $ do
                        Nothing -> (0 :: Int)
                        Just (p,_) -> p
 
--- allocate n words, initialize, and return a pointer to the first one
+-- allocate n words, initialize with zeros, and return a pointer to
+-- the first one
 malloc :: Int -> C Int
 malloc n = do
   p <- findSpaceFor n
   mapM_ (\p' -> store p' 0) [p .. p+n-1]
   return p
 
+free1 :: Int -> C ()
+free1 p = C $ do
+  Heap h <- get
+  put $ Heap $ Map.delete p h
+
+-- Free n words starting at p
+free :: Int -> Int -> C ()
+free 0 _ = failC
+free p n = do
+  mapM_ (\p' -> free1 p') [p .. p+n-1]
+  return ()
 
 -------------------------------------------------------------------
 -- The CN monad (for evaluating SL predicates on concrete heaps)
@@ -382,6 +394,8 @@ prop_intQueueSHeapBuilder ns =
     runCN (intQueue p) (Heap h) === Just (Map.keysSet h, ns)
   where (sv, sh) = runSHeapBuilder (intQueueSHeapBuilder ns)
 
+-- We push at the tail and pop from the head, to make the pointer
+-- swizzling simpler for popping
 pushC :: Int -> Int -> C ()
 pushC 0 _ = failC
 pushC p i = do
@@ -389,11 +403,11 @@ pushC p i = do
   t <- deref $ p+1
   c <- malloc 2
   store c i
-  store (c+1) h
-  store p c
-  if t == 0
-    then store (p+1) c
-    else return ()
+  store (c+1) 0
+  store (p+1) c
+  if h == 0
+    then store p c
+    else store (t+1) c
 
 prop_pushC :: [Int] -> Int -> Property
 prop_pushC ns i =
@@ -407,6 +421,41 @@ prop_pushC ns i =
     case r of
       Nothing -> False
       Just () -> runCN (intQueue pn) (Heap h')
-                 == Just (Map.keysSet h', [i] ++ ns)
+                 == Just (Map.keysSet h', ns ++ [i])
+
+  where (svn, sh) = runSHeapBuilder (intQueueSHeapBuilder ns)
+
+popC :: Int -> C Int
+popC 0 = failC
+popC p = do
+  h <- deref p
+  t <- deref $ p+1
+  if h == 0
+    then failC
+    else do
+      res <- deref h
+      next <- deref $ h+1
+      free h 2
+      store p next
+      if next == 0 then store (p+1) 0
+         else return ()
+      return res
+
+prop_popC :: [Int] -> Property
+prop_popC ns =
+  forAll (concretize sh []) $ \(h, am) ->
+    let pn = intFromSVal am svn
+        (res, Heap h') = runC (popC pn) h in
+    counterexample ("h = " ++ show h) $
+    counterexample ("pn = " ++ show pn) $
+    counterexample ("res = " ++ show res) $
+    counterexample ("h' = " ++ show h') $
+    case ns of
+      [] ->   res == Nothing
+              && runCN (intQueue pn) (Heap h')
+                 == Just (Map.keysSet h', [])
+      i:ns -> res == Just i
+              && runCN (intQueue pn) (Heap h')
+                 == Just (Map.keysSet h', ns)
 
   where (svn, sh) = runSHeapBuilder (intQueueSHeapBuilder ns)

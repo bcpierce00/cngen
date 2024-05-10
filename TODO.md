@@ -1,20 +1,5 @@
-* Next job: Implement malloc.  Proposal:
-  - start by keeping the present concretize function
-  - add a simplest possible malloc that just (deterministically) finds
-    the first index not in the domain of the current heap and
-    allocates there
-      - later, we could have malloc look for a free space of
-        appropriate size, following pre-generated instructions as
-        sketched below
-      - note that the "simplest" instruction -- the one that others
-        shrink to -- should be to put the new stuff just past (but not
-        directly adjacent to) the very last allocated memory cell
-      - last, consider replacing the current fancy concretize with
-        calls to this new malloc
-  - free just removes an index from the heap  (this should be adequate
-    for finding double-free errors?)
-
 * Short-term tasks
+  - try to generalize prop_pushC and prop_popC
   - Make a typeclass for ownable things (plus conversions with
     individual word ownership)
   - Think about arrays
@@ -35,7 +20,7 @@
         statically and dynamically allocated data
   - Malloc needs to behave randomly (but putting C execution in the
     Gen monad will totally mess up shrinking; hence ...
-  - Current proposal:
+  - Current proposal for an interesting version of malloc:
      - pre-generate an infinite list of instructions to malloc
      - Each instruction is either a number between 0 and 1, where 0
        means "first gap", 1 means "last gap" (after the last
@@ -43,6 +28,21 @@
        the gap"
      - Think about shrinking, both for heaps and for "malloc schedules"
   - Does the analogy with concurrent testing help?
+* Current simplistic implementaton of malloc...
+  - start by keeping the present concretize function
+  - add a simplest possible malloc that just (deterministically) finds
+    the first index not in the domain of the current heap and
+    allocates there
+      - later, we could have malloc look for a free space of
+        appropriate size, following pre-generated instructions as
+        sketched below
+      - note that the "simplest" instruction -- the one that others
+        shrink to -- should be to put the new stuff just past (but not
+        directly adjacent to) the very last allocated memory cell
+      - last, consider replacing the current fancy concretize with
+        calls to this new malloc
+  - free just removes an index from the heap  (this should be adequate
+    for finding double-free errors?)
 
 * Shrinking heaps is interesting!
    - Ultimately, we will want to keep the symbolic heap and shrink
